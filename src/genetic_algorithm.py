@@ -158,10 +158,10 @@ def genetic_algorithm(problema, orcamento=None, rng=None, tamanho_populacao=60,
 
         populacao = nova_populacao
         geracao += 1
-        ultimo_resumo = _resumo_geracao(
-            populacao, geracao, problema.avaliacoes_usadas
-        )
         if geracao % passo_registro == 0 or problema.orcamento_esgotado():
+            ultimo_resumo = _resumo_geracao(
+                populacao, geracao, problema.avaliacoes_usadas
+            )
             geracoes_info.append(ultimo_resumo)
 
     if geracoes_info[-1]["geracao"] != ultimo_resumo["geracao"]:
