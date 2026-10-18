@@ -11,3 +11,7 @@ venv/
 # PyCharm/IntelliJ
 .idea/
 
+
+# Históricos brutos dos experimentos (~30 MB, regeneráveis com `python -m src.experimentos principal`)
+resultados/principal_extras.json
+resultados/rapido/

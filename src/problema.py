@@ -176,3 +176,67 @@ def solucao_aleatoria(n, rng=None):
     solucao = list(range(1, n + 1))
     rng.shuffle(solucao)
     return solucao
+
+
+# ---------------------------------------------------------------------------
+# Avaliação incremental (apenas o sufixo afetado por um movimento)
+# ---------------------------------------------------------------------------
+
+def prefixos(solucao, instancia):
+    """Tempos de conclusão e custos acumulados de cada prefixo de solucao.
+
+    Devolve (C, H), listas de tamanho n+1 em que, para k ativos já visitados,
+    C[k] é o instante de conclusão do k-ésimo ativo (C[0] = 0) e H[k] é o
+    custo acumulado deles (H[0] = 0). Não conta avaliações: é só preparação
+    para avaliar_sufixo.
+    """
+    ativos = instancia["ativos"]
+    tempos = instancia["tempos"]
+    C = [0]
+    H = [0]
+    posicao = 0
+    tempo = 0
+    custo = 0
+    for ativo in solucao:
+        tempo += tempos[posicao][ativo] + ativos[ativo]["p"]
+        atraso = tempo - ativos[ativo]["d"]
+        if atraso > 0:
+            custo += ativos[ativo]["w"] * atraso
+        posicao = ativo
+        C.append(tempo)
+        H.append(custo)
+    return C, H
+
+
+def avaliar_sufixo(vizinho, instancia, k, C, H):
+    """h(vizinho), reaproveitando os k primeiros ativos de uma solução-base.
+
+    Pré-condição: vizinho[:k] é igual aos k primeiros ativos da solução cujos
+    prefixos (C, H) foram calculados por prefixos(). Só os ativos a partir da
+    posição k são reavaliados: custo O(n - k) em vez de O(n). O resultado é
+    idêntico a avaliar(vizinho, instancia). Não conta avaliações.
+    """
+    ativos = instancia["ativos"]
+    tempos = instancia["tempos"]
+    posicao = vizinho[k - 1] if k > 0 else 0
+    tempo = C[k]
+    custo = H[k]
+    for i in range(k, len(vizinho)):
+        ativo = vizinho[i]
+        dados = ativos[ativo]
+        tempo += tempos[posicao][ativo] + dados["p"]
+        atraso = tempo - dados["d"]
+        if atraso > 0:
+            custo += dados["w"] * atraso
+        posicao = ativo
+    return custo
+
+
+def avaliar_sufixo_com_contagem(vizinho, instancia, k, C, H):
+    """Igual a avaliar_sufixo, mas conta UMA avaliação de h.
+
+    Uma avaliação incremental vale uma avaliação no orçamento: o ganho é de
+    tempo de parede, não de contagem.
+    """
+    instancia["avaliacoes"] += 1
+    return avaliar_sufixo(vizinho, instancia, k, C, H)
