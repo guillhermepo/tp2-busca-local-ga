@@ -3,10 +3,10 @@
 Trabalho Prático 2 - Fundamentos de Inteligência Artificial - UFMG.
 ## Integrantes 
 
-Guilherme de Paula - 2025421294
-Júlia Martins dos Santos - 2024020601
-Luiza Ribeiro Tavares - 2024010347
-Victor Hugo de Jesus Oliveira - 2024022159
+* Guilherme de Paula - 2025421294 
+* Júlia Martins dos Santos - 2024020601
+* Luiza Ribeiro Tavares - 2024010347
+* Victor Hugo de Jesus Oliveira - 2024022159
 
 ## Instalação
 
