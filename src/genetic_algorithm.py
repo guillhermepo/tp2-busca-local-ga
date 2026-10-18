@@ -1,25 +1,6 @@
-"""genetic_algorithm.py
-
-Genetic Algorithm para problemas cujas soluções são permutações.
-
-- Cromossomo: uma permutação (gene = posição, alelo = ativo).
-- Inicialização: N permutações aleatórias.
-- Seleção: torneio. Como h é custo (minimização), vence o indivíduo de
-  menor h; o torneio só compara valores, então não é preciso converter h
-  em uma aptidão positiva (como seria na roleta).
-- Cruzamento: Order Crossover (OX), aplicado com probabilidade Pc.
-- Mutação: Swap Mutation, aplicada a cada filho com probabilidade Pm.
-- Elitismo: os `elites` melhores passam intactos para a próxima geração.
-- Parada: esgotamento do orçamento de avaliações.
-
-Cada filho novo avaliado conta 1 avaliação. Um filho que não sofreu
-cruzamento nem mutação é cópia de um pai e herda o h já conhecido; os
-elites também não são reavaliados.
-"""
+"""Genetic Algorithm para problemas de permutação."""
 
 import random
-
-from src.problema import avaliar_com_contagem, solucao_aleatoria, zerar_contador
 
 
 def torneio(populacao, tamanho, rng):
@@ -33,22 +14,7 @@ def torneio(populacao, tamanho, rng):
 
 
 def order_crossover(pai1, pai2, rng):
-    """Order Crossover (OX).
-
-    1. Sorteia dois cortes a <= b e copia pai1[a..b] para o filho, nas
-       mesmas posições.
-    2. Percorre pai2 a partir da posição b+1 (voltando ao início ao chegar
-       ao fim) e, na mesma ordem, preenche as posições livres do filho, também
-       a partir de b+1, pulando os ativos que já estão no filho.
-
-    Exemplo com a = 2, b = 4:
-        pai1  = [1, 2, 3, 4, 5, 6, 7]
-        pai2  = [5, 7, 4, 1, 6, 3, 2]
-        filho = [_, _, 3, 4, 5, _, _]
-        pai2 a partir da posição 5: 3, 2, 5, 7, 4, 1, 6 -> sem 3, 4, 5: 2, 7, 1, 6
-        posições livres a partir da 5: 5, 6, 0, 1
-        filho = [1, 6, 3, 4, 5, 2, 7]
-    """
+    """Order Crossover (OX): preserva um trecho de pai1 e a ordem relativa de pai2."""
     n = len(pai1)
     a, b = sorted(rng.sample(range(n), 2))
 
@@ -66,7 +32,7 @@ def order_crossover(pai1, pai2, rng):
 
 
 def swap_mutation(cromossomo, rng):
-    """Troca os alelos de duas posições sorteadas (devolve nova lista)."""
+    """Troca os alelos de duas posições sorteadas."""
     mutante = list(cromossomo)
     i, j = rng.sample(range(len(mutante)), 2)
     mutante[i], mutante[j] = mutante[j], mutante[i]
@@ -74,12 +40,7 @@ def swap_mutation(cromossomo, rng):
 
 
 def diversidade(populacao):
-    """Devolve (cromossomos distintos, distância média entre pares).
-
-    A distância entre dois cromossomos é a fração de posições em que os
-    alelos diferem (Hamming normalizada): 0 = iguais, 1 = nenhuma posição
-    em comum.
-    """
+    """Calcula a quantidade de cromossomos distintos e a distância de Hamming média."""
     cromossomos = [individuo[0] for individuo in populacao]
     distintos = len(set(tuple(c) for c in cromossomos))
 
@@ -101,26 +62,29 @@ def diversidade(populacao):
     return distintos, diferencas / (pares * n)
 
 
-def genetic_algorithm(instancia, orcamento, rng=None, tamanho_populacao=60,
+def _resumo_geracao(populacao, geracao, avaliacoes):
+    valores = [individuo[1] for individuo in populacao]
+    distintos, distancia = diversidade(populacao)
+    return {
+        "geracao": geracao,
+        "avaliacoes": avaliacoes,
+        "melhor_h": min(valores),
+        "media_h": sum(valores) / len(valores),
+        "distintos": distintos,
+        "distancia_media": distancia,
+    }
+
+
+def genetic_algorithm(problema, orcamento=None, rng=None, tamanho_populacao=60,
                       pc=0.9, pm=0.2, tamanho_torneio=3, elites=2,
                       janelas=100):
-    """Executa o GA até gastar exatamente o orçamento de avaliações.
-
-    A população é uma lista de pares (cromossomo, h).
-
-    Devolve um dicionário com:
-    - melhor_solucao, melhor_h, avaliacoes, geracoes
-    - historico: lista de (avaliacoes, melhor_h) a cada nova melhor solução
-    - geracoes_info: lista de dicionários ao longo das gerações, com
-      avaliacoes, melhor_h (da população), media_h, distintos e
-      distancia_media
-    """
+    """Executa o Genetic Algorithm até esgotar o orçamento de avaliações."""
     if rng is None:
         rng = random.Random()
     elif isinstance(rng, int):
         rng = random.Random(rng)
 
-    zerar_contador(instancia)
+    problema.iniciar_orcamento(orcamento)
 
     melhor_solucao = None
     melhor_h = None
@@ -128,43 +92,32 @@ def genetic_algorithm(instancia, orcamento, rng=None, tamanho_populacao=60,
 
     populacao = []
     for _ in range(tamanho_populacao):
-        cromossomo = solucao_aleatoria(instancia["n"], rng)
-        h = avaliar_com_contagem(cromossomo, instancia)
+        if problema.orcamento_esgotado():
+            break
+        cromossomo = problema.solucao_aleatoria(rng)
+        h = problema.avaliar(cromossomo)
         populacao.append((cromossomo, h))
         if melhor_h is None or h < melhor_h:
             melhor_solucao = cromossomo
             melhor_h = h
-            historico.append((instancia["avaliacoes"], melhor_h))
+            historico.append((problema.avaliacoes_usadas, melhor_h))
 
     novos_por_geracao = max(1, tamanho_populacao - elites)
-    geracoes_estimadas = max(1, (orcamento - tamanho_populacao) // novos_por_geracao)
+    geracoes_estimadas = max(
+        1, (problema.orcamento - len(populacao)) // novos_por_geracao
+    )
     passo_registro = max(1, geracoes_estimadas // janelas)
 
-    geracoes_info = []
     geracao = 0
+    ultimo_resumo = _resumo_geracao(populacao, geracao, problema.avaliacoes_usadas)
+    geracoes_info = [ultimo_resumo]
 
-    while True:
-        fim = instancia["avaliacoes"] >= orcamento
-        if geracao % passo_registro == 0 or fim:
-            valores = [individuo[1] for individuo in populacao]
-            distintos, distancia = diversidade(populacao)
-            geracoes_info.append({
-                "geracao": geracao,
-                "avaliacoes": instancia["avaliacoes"],
-                "melhor_h": min(valores),
-                "media_h": sum(valores) / len(valores),
-                "distintos": distintos,
-                "distancia_media": distancia,
-            })
-
-        if fim:
-            break
-
+    while not problema.orcamento_esgotado():
         ordenada = sorted(populacao, key=lambda individuo: individuo[1])
         nova_populacao = ordenada[:elites]
 
         while (len(nova_populacao) < tamanho_populacao
-               and instancia["avaliacoes"] < orcamento):
+               and not problema.orcamento_esgotado()):
             pai1 = torneio(populacao, tamanho_torneio, rng)
             pai2 = torneio(populacao, tamanho_torneio, rng)
 
@@ -185,27 +138,39 @@ def genetic_algorithm(instancia, orcamento, rng=None, tamanho_populacao=60,
             for k in range(2):
                 if len(nova_populacao) >= tamanho_populacao:
                     break
+                # Filhos idênticos aos pais e elites reaproveitam o h já conhecido.
                 if not alterados[k]:
                     nova_populacao.append(pais[k])
                     continue
-                if instancia["avaliacoes"] >= orcamento:
+                if problema.orcamento_esgotado():
                     break
-                h = avaliar_com_contagem(filhos[k], instancia)
+                h = problema.avaliar(filhos[k])
                 nova_populacao.append((filhos[k], h))
                 if h < melhor_h:
                     melhor_solucao = filhos[k]
                     melhor_h = h
-                    historico.append((instancia["avaliacoes"], melhor_h))
+                    historico.append((problema.avaliacoes_usadas, melhor_h))
 
-        # Se o orçamento acabar no meio da geração, ela fica incompleta; os
-        # indivíduos que faltam nunca seriam avaliados mesmo.
+        # Se o orçamento acabar aqui, a geração fica incompleta e
+        # não entra na medida de diversidade.
+        if len(nova_populacao) < tamanho_populacao:
+            break
+
         populacao = nova_populacao
         geracao += 1
+        ultimo_resumo = _resumo_geracao(
+            populacao, geracao, problema.avaliacoes_usadas
+        )
+        if geracao % passo_registro == 0 or problema.orcamento_esgotado():
+            geracoes_info.append(ultimo_resumo)
+
+    if geracoes_info[-1]["geracao"] != ultimo_resumo["geracao"]:
+        geracoes_info.append(ultimo_resumo)
 
     return {
         "melhor_solucao": melhor_solucao,
         "melhor_h": melhor_h,
-        "avaliacoes": instancia["avaliacoes"],
+        "avaliacoes": problema.avaliacoes_usadas,
         "geracoes": geracao,
         "historico": historico,
         "geracoes_info": geracoes_info,

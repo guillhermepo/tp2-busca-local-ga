@@ -1,57 +1,23 @@
-"""greedy.py
-
-Greedy Descent com Random Restart.
-
-Variantes de escolha do próximo sucessor:
-- "best":  Best Improvement, varre a vizinhança inteira e vai para o melhor
-           vizinho;
-- "first": First Improvement, percorre a vizinhança em ordem aleatória e vai
-           para o primeiro vizinho que melhora h.
-
-Os vizinhos e seus valores de h vêm de vizinhancas.avaliar_vizinhos, que
-avalia cada vizinho através de problema.avaliar_com_contagem. O orçamento é
-conferido depois de cada avaliação, logo o total nunca passa do orçamento.
-
-Uso:
-    resultado = greedy_random_restart(instancia, "swap", "best", 50000, rng)
-"""
+"""Greedy Descent (Best e First Improvement) com Random Restart."""
 
 import random
 
-from src.problema import avaliar_com_contagem, solucao_aleatoria, zerar_contador
-from src.vizinhancas import avaliar_vizinhos, tamanho_vizinhanca
 
-
-def orcamento_esgotado(instancia, orcamento):
-    """True se o número de avaliações já atingiu o orçamento."""
-    return instancia["avaliacoes"] >= orcamento
-
-
-def descida(instancia, solucao_inicial, operador, estrategia, orcamento, rng,
+def descida(problema, solucao_inicial, operador, estrategia, rng,
             incremental=True):
-    """Uma descida gulosa a partir de solucao_inicial.
-
-    Devolve (solucao, h, passos, otimo_local, trajetoria):
-    - passos: quantidade de movimentos de melhoria feitos;
-    - otimo_local: True se a descida terminou porque nenhum vizinho melhora
-      a solução (vizinhança inteira avaliada). False se o orçamento acabou
-      antes disso;
-    - trajetoria: lista de (avaliacoes, h) da solução inicial e de cada
-      melhoria, com o número de avaliações no momento em que ela foi
-      encontrada (usada nas curvas de convergência).
-    """
+    """Executa uma descida gulosa a partir de solucao_inicial."""
     atual = solucao_inicial
-    h_atual = avaliar_com_contagem(atual, instancia)
+    h_atual = problema.avaliar(atual)
     passos = 0
-    trajetoria = [(instancia["avaliacoes"], h_atual)]
-    tamanho = tamanho_vizinhanca(len(atual), operador)
+    trajetoria = [(problema.avaliacoes_usadas, h_atual)]
+    tamanho = problema.tamanho_vizinhanca(operador)
 
-    # No First Improvement a ordem dos vizinhos é sorteada, para não
-    # favorecer sempre os movimentos nas primeiras posições.
+    # No First Improvement a ordem é sorteada para não favorecer
+    # sempre os primeiros movimentos.
     rng_ordem = rng if estrategia == "first" else None
 
     while True:
-        if orcamento_esgotado(instancia, orcamento):
+        if problema.orcamento_esgotado():
             return atual, h_atual, passos, False, trajetoria
 
         melhor_vizinho = None
@@ -59,19 +25,19 @@ def descida(instancia, solucao_inicial, operador, estrategia, orcamento, rng,
         avaliacoes_do_melhor = 0
         examinados = 0
 
-        for vizinho, h_vizinho in avaliar_vizinhos(
-            atual, operador, instancia, incremental, rng_ordem
+        for vizinho, h_vizinho in problema.sucessores(
+            atual, operador, incremental, rng_ordem
         ):
             examinados += 1
 
             if h_vizinho < h_melhor_vizinho:
                 melhor_vizinho = vizinho
                 h_melhor_vizinho = h_vizinho
-                avaliacoes_do_melhor = instancia["avaliacoes"]
+                avaliacoes_do_melhor = problema.avaliacoes_usadas
                 if estrategia == "first":
-                    break  # aceita o primeiro que melhora
+                    break
 
-            if orcamento_esgotado(instancia, orcamento):
+            if problema.orcamento_esgotado():
                 break
 
         if melhor_vizinho is not None:
@@ -80,36 +46,20 @@ def descida(instancia, solucao_inicial, operador, estrategia, orcamento, rng,
             passos += 1
             trajetoria.append((avaliacoes_do_melhor, h_atual))
         elif examinados == tamanho:
-            # vizinhança inteira avaliada e nenhum vizinho melhora
             return atual, h_atual, passos, True, trajetoria
         else:
-            # o orçamento acabou no meio da varredura
             return atual, h_atual, passos, False, trajetoria
 
 
-def greedy_random_restart(instancia, operador, estrategia, orcamento,
+def greedy_random_restart(problema, operador, estrategia, orcamento=None,
                           rng=None, incremental=True):
-    """Greedy Descent com Random Restart até gastar o orçamento.
-
-    Zera o contador de avaliações da instância no início.
-    Enquanto houver orçamento: sorteia uma solução inicial, desce até um
-    ótimo local e recomeça.
-
-    Devolve um dicionário com:
-    - melhor_solucao, melhor_h
-    - avaliacoes: total de avaliações usadas
-    - passos: total de passos de melhoria (somando todas as descidas)
-    - restarts: quantas vezes recomeçou (descidas - 1)
-    - otimos_locais: lista de (solucao, h) de cada ótimo local encontrado
-    - historico: lista de (avaliacoes, melhor_h) a cada nova melhor solução
-      (útil para curvas de convergência)
-    """
+    """Executa Greedy Descent com Random Restart até esgotar o orçamento."""
     if rng is None:
         rng = random.Random()
     elif isinstance(rng, int):
         rng = random.Random(rng)
 
-    zerar_contador(instancia)
+    problema.iniciar_orcamento(orcamento)
 
     melhor_solucao = None
     melhor_h = None
@@ -118,11 +68,10 @@ def greedy_random_restart(instancia, operador, estrategia, orcamento,
     otimos_locais = []
     historico = []
 
-    while not orcamento_esgotado(instancia, orcamento):
-        inicial = solucao_aleatoria(instancia["n"], rng)
+    while not problema.orcamento_esgotado():
+        inicial = problema.solucao_aleatoria(rng)
         solucao, h, passos, otimo_local, trajetoria = descida(
-            instancia, inicial, operador, estrategia, orcamento, rng,
-            incremental
+            problema, inicial, operador, estrategia, rng, incremental
         )
         descidas += 1
         passos_total += passos
@@ -141,7 +90,7 @@ def greedy_random_restart(instancia, operador, estrategia, orcamento,
     return {
         "melhor_solucao": melhor_solucao,
         "melhor_h": melhor_h,
-        "avaliacoes": instancia["avaliacoes"],
+        "avaliacoes": problema.avaliacoes_usadas,
         "passos": passos_total,
         "restarts": descidas - 1,
         "otimos_locais": otimos_locais,

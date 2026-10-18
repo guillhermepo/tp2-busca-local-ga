@@ -1,49 +1,18 @@
-"""problema.py
-
-Base comum do projeto: leitura da instância, tempos de deslocamento,
-função objetivo h (atraso ponderado total) e solução aleatória.
-
-CONVENÇÃO DE ÍNDICES (importante, vale para todo o projeto):
-
-    índice 0 = base
-    índice 1 = ativo 1
-    ...
-    índice n = ativo n
-
-Uma solução é uma lista com uma permutação de 1..n (a base NÃO aparece nela).
-Exemplo para n = 3: [2, 3, 1] -> sai da base, visita o ativo 2, depois o 3,
-depois o 1.
-
-A instância é um dicionário com as chaves:
-
-    "n"          -> quantidade de ativos
-    "base"       -> tupla (x, y) da base
-    "ativos"     -> lista de tamanho n+1; ativos[0] é a base (p=d=w=0) e
-                    ativos[j] é um dicionário {"x", "y", "p", "d", "w"}
-    "tempos"     -> matriz (n+1) x (n+1) com os tempos de deslocamento
-    "avaliacoes" -> contador de avaliações de h (ver avaliar_com_contagem)
-"""
+"""Leitura das instâncias, cálculo da função objetivo h e interface do problema."""
 
 import math
 import random
 
+from src.vizinhancas import (
+    avaliar_vizinhos,
+    sucessor_aleatorio,
+    tamanho_vizinhanca,
+)
 
-# ---------------------------------------------------------------------------
-# Leitura da instância
-# ---------------------------------------------------------------------------
 
 def carregar_instancia(caminho):
-    """Lê um arquivo de instância e devolve o dicionário da instância.
-
-    Formato do arquivo:
-        n
-        x_base y_base
-        x_1 y_1 p_1 d_1 w_1
-        ...
-        x_n y_n p_n d_n w_n
-    """
+    """Lê um arquivo de instância e devolve os dados do problema."""
     with open(caminho, "r", encoding="utf-8") as arquivo:
-        # Lê todos os números do arquivo, ignorando quebras de linha e espaços
         numeros = [int(valor) for valor in arquivo.read().split()]
 
     n = numeros[0]
@@ -55,23 +24,21 @@ def carregar_instancia(caminho):
             f"encontrados {len(numeros)}"
         )
 
-    # A posição 0 representa a base: duração, prazo e peso são zero.
+    # A base usa o índice 0; os ativos começam em 1.
     ativos = [{"x": base[0], "y": base[1], "p": 0, "d": 0, "w": 0}]
 
-    posicao = 3  # primeiro número depois de n e da base
+    posicao = 3
     for _ in range(n):
         x, y, p, d, w = numeros[posicao:posicao + 5]
         ativos.append({"x": x, "y": y, "p": p, "d": d, "w": w})
         posicao += 5
 
-    instancia = {
+    return {
         "n": n,
         "base": base,
         "ativos": ativos,
-        "avaliacoes": 0,
+        "tempos": calcular_matriz_tempos(ativos),
     }
-    instancia["tempos"] = calcular_matriz_tempos(ativos)
-    return instancia
 
 
 def instancia_exemplo_figura1():
@@ -88,34 +55,18 @@ def instancia_exemplo_figura1():
         "base": (0, 0),
         "ativos": ativos,
         "tempos": calcular_matriz_tempos(ativos),
-        "avaliacoes": 0,
     }
 
 
-# ---------------------------------------------------------------------------
-# Tempos de deslocamento
-# ---------------------------------------------------------------------------
-
 def calcular_distancia(ponto_a, ponto_b):
-    """Tempo de deslocamento entre dois pontos (x, y).
-
-    t_ij = round(sqrt((x_i - x_j)^2 + (y_i - y_j)^2))
-
-    O round do Python devolve o inteiro mais próximo. (O caso especial de
-    empate em .5 não ocorre aqui: a raiz de um inteiro ou é inteira ou é
-    irracional.)
-    """
+    """Calcula o tempo de deslocamento euclidiano arredondado entre dois pontos."""
     dx = ponto_a[0] - ponto_b[0]
     dy = ponto_a[1] - ponto_b[1]
     return round(math.sqrt(dx * dx + dy * dy))
 
 
 def calcular_matriz_tempos(ativos):
-    """Pré-calcula os tempos entre todos os pares de pontos.
-
-    tempos[i][j] = tempo de deslocamento do ponto i ao ponto j, com
-    índice 0 = base, 1 = ativo 1, ..., n = ativo n.
-    """
+    """Calcula os tempos de deslocamento entre todos os pontos."""
     pontos = [(ativo["x"], ativo["y"]) for ativo in ativos]
     return [
         [calcular_distancia(origem, destino) for destino in pontos]
@@ -123,42 +74,21 @@ def calcular_matriz_tempos(ativos):
     ]
 
 
-# ---------------------------------------------------------------------------
-# Função de avaliação
-# ---------------------------------------------------------------------------
-
 def avaliar(solucao, instancia, inicio=0, tempo_inicial=0, custo_inicial=0,
             prefixos=None):
-    """Calcula h(solucao) = soma de w_j * max(0, C_j - d_j).
-
-    Esta função NÃO conta avaliações. Use-a em testes e verificações.
-    Os algoritmos devem usar avaliar_com_contagem.
-
-    Parâmetros opcionais (usados pela avaliação incremental):
-    - inicio, tempo_inicial, custo_inicial: começa na posição `inicio`,
-      supondo que os `inicio` primeiros ativos já foram percorridos e
-      terminaram no instante tempo_inicial com custo acumulado custo_inicial.
-    - prefixos: se for uma lista, recebe (C, h acumulado) depois de cada
-      posição percorrida.
-    """
+    """Calcula o atraso ponderado total h(solucao) sem contar no orçamento."""
     ativos = instancia["ativos"]
     tempos = instancia["tempos"]
 
-    if inicio == 0:
-        posicao_atual = 0  # começa na base (índice 0)
-    else:
-        posicao_atual = solucao[inicio - 1]
-    tempo_atual = tempo_inicial   # C_0 = 0 quando inicio = 0
+    posicao_atual = 0 if inicio == 0 else solucao[inicio - 1]
+    tempo_atual = tempo_inicial
     custo = custo_inicial
 
     for k in range(inicio, len(solucao)):
         ativo = solucao[k]
         info = ativos[ativo]
 
-        # Tempo de conclusão: tempo anterior + deslocamento + manutenção
         tempo_atual += tempos[posicao_atual][ativo] + info["p"]
-
-        # Atraso é zero se terminou no prazo (ou antes)
         atraso = tempo_atual - info["d"]
         if atraso > 0:
             custo += info["w"] * atraso
@@ -166,43 +96,13 @@ def avaliar(solucao, instancia, inicio=0, tempo_inicial=0, custo_inicial=0,
         if prefixos is not None:
             prefixos.append((tempo_atual, custo))
 
-        posicao_atual = ativo  # próxima viagem parte deste ativo
+        posicao_atual = ativo
 
     return custo
 
 
-# ---------------------------------------------------------------------------
-# Contagem de avaliações (centralizada aqui)
-# ---------------------------------------------------------------------------
-
-def avaliar_com_contagem(solucao, instancia, inicio=0, tempo_inicial=0,
-                         custo_inicial=0):
-    """Igual a avaliar, mas incrementa instancia["avaliacoes"].
-
-    É o ÚNICO lugar onde o contador aumenta. Todos os algoritmos
-    (Greedy, SA, GA) devem avaliar soluções através desta função, para que
-    o orçamento de avaliações seja contado corretamente. Uma avaliação
-    incremental (inicio > 0) conta como uma avaliação, igual à completa.
-    """
-    instancia["avaliacoes"] += 1
-    return avaliar(solucao, instancia, inicio, tempo_inicial, custo_inicial)
-
-
-def zerar_contador(instancia):
-    """Zera o contador de avaliações (chamar no início de cada execução)."""
-    instancia["avaliacoes"] = 0
-
-
-# ---------------------------------------------------------------------------
-# Solução aleatória
-# ---------------------------------------------------------------------------
-
 def solucao_aleatoria(n, rng=None):
-    """Gera uma permutação aleatória de 1..n.
-
-    rng: objeto random.Random (para reprodutibilidade), ou um inteiro usado
-    como semente. Se for None, usa uma fonte aleatória nova.
-    """
+    """Gera uma permutação aleatória dos ativos 1..n."""
     if rng is None:
         rng = random.Random()
     elif isinstance(rng, int):
@@ -211,3 +111,106 @@ def solucao_aleatoria(n, rng=None):
     solucao = list(range(1, n + 1))
     rng.shuffle(solucao)
     return solucao
+
+
+class Problema:
+    """Interface do problema usada pelos algoritmos de busca."""
+
+    def __init__(self, instancia, orcamento=None):
+        self._instancia = instancia
+        self.n = instancia["n"]
+        self.orcamento = orcamento
+        self.avaliacoes_usadas = 0
+
+    def iniciar_orcamento(self, orcamento=None):
+        """Reinicia o contador de avaliações e define o orçamento da execução."""
+        if orcamento is not None:
+            self.orcamento = orcamento
+        self.avaliacoes_usadas = 0
+
+    def orcamento_esgotado(self):
+        """Indica se o limite de avaliações de h foi atingido."""
+        return (self.orcamento is not None
+                and self.avaliacoes_usadas >= self.orcamento)
+
+    def solucao_aleatoria(self, rng=None):
+        return solucao_aleatoria(self.n, rng)
+
+    def avaliar(self, solucao, inicio=0, estado=None):
+        """Avalia uma solução (completa ou incremental) contabilizando 1 avaliação."""
+        self.avaliacoes_usadas += 1
+        if estado is None:
+            return avaliar(solucao, self._instancia, inicio=inicio)
+        tempo_inicial, custo_inicial = estado
+        return avaliar(solucao, self._instancia, inicio, tempo_inicial,
+                       custo_inicial)
+
+    def h(self, solucao):
+        return self.avaliar(solucao)
+
+    def estados_prefixo(self, solucao):
+        """Retorna (tempo, custo) acumulados ao longo de solucao sem gastar avaliação."""
+        prefixos = [(0, 0)]
+        avaliar(solucao, self._instancia, prefixos=prefixos)
+        return prefixos
+
+    def sucessores(self, solucao, operador, incremental=True, rng=None):
+        return avaliar_vizinhos(solucao, operador, self, incremental, rng)
+
+    def sucessor_aleatorio(self, solucao, operador, rng=None):
+        return sucessor_aleatorio(solucao, operador, rng)
+
+    def tamanho_vizinhanca(self, operador):
+        return tamanho_vizinhanca(self.n, operador)
+
+
+class Problema:
+    """Interface do problema usada pelos algoritmos de busca."""
+
+    def __init__(self, instancia, orcamento=None):
+        self._instancia = instancia
+        self.n = instancia["n"]
+        self.orcamento = orcamento
+        self.avaliacoes_usadas = 0
+
+    def iniciar_orcamento(self, orcamento=None):
+        """Reinicia o contador de avaliações e define o orçamento da execução."""
+        if orcamento is not None:
+            self.orcamento = orcamento
+        self.avaliacoes_usadas = 0
+
+    def orcamento_esgotado(self):
+        """Indica se o limite de avaliações de h foi atingido."""
+        return (self.orcamento is not None
+                and self.avaliacoes_usadas >= self.orcamento)
+
+    def solucao_aleatoria(self, rng=None):
+        return solucao_aleatoria(self.n, rng)
+
+    def avaliar(self, solucao, inicio=0, estado=None):
+        """Avalia uma solução (completa ou incremental) contabilizando 1 avaliação."""
+        self.avaliacoes_usadas += 1
+        if estado is None:
+            return avaliar(solucao, self._instancia, inicio=inicio)
+        tempo_inicial, custo_inicial = estado
+        return avaliar(solucao, self._instancia, inicio, tempo_inicial,
+                       custo_inicial)
+
+    def h(self, solucao):
+        return self.avaliar(solucao)
+
+    def estados_prefixo(self, solucao):
+        """Retorna (tempo, custo) acumulados ao longo de solucao sem gastar avaliação."""
+        prefixos = [(0, 0)]
+        avaliar(solucao, self._instancia, prefixos=prefixos)
+        return prefixos
+
+    def sucessores(self, solucao, operador, incremental=True, rng=None):
+        return avaliar_vizinhos(solucao, operador, self, incremental, rng)
+
+    def sucessor_aleatorio(self, solucao, operador, rng=None):
+        return sucessor_aleatorio(solucao, operador, rng)
+
+    def tamanho_vizinhanca(self, operador):
+        return tamanho_vizinhanca(self.n, operador)
+

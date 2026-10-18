@@ -1,30 +1,16 @@
 # TP2 - Busca Local e Algoritmo Genético
 
-Trabalho Prático 2 da disciplina Fundamentos de Inteligência Artificial - UFMG.
+Trabalho Prático 2 - Fundamentos de Inteligência Artificial - UFMG.
 
 ## Instalação
 
 ```bash
 python -m venv .venv
-```
-
-Ativar no Windows:
-
-```bash
 .venv\Scripts\activate
-```
-
-Ativar no Linux/macOS:
-
-```bash
-source .venv/bin/activate
-```
-
-Instalar as dependências:
-
-```bash
 pip install -r requirements.txt
 ```
+
+No Linux/macOS, ative o ambiente com `source .venv/bin/activate`.
 
 ## Testes
 
@@ -32,50 +18,41 @@ pip install -r requirements.txt
 python -m pytest
 ```
 
-Validação direta da função `h` nos casos de referência do enunciado:
+## Validação
 
 ```bash
 python -m src.experimentos validar
 ```
 
-## Experimentos
-
-Executar todo o protocolo oficial (T1, T2, avaliação incremental, T3 e experimento adicional do GA):
-
-```bash
-python -m src.experimentos tudo
-```
-
-Ou executar cada etapa separadamente:
+## Comparação das vizinhanças
 
 ```bash
 python -m src.experimentos t2
 python -m src.experimentos incremental
-python -m src.experimentos t3
+python -m src.analise vizinhancas
+```
+
+Após analisar a T2, escolha a vizinhança utilizada nos experimentos principais.
+
+## Calibração do SA
+
+```bash
+python -m src.experimentos calibrar_sa insertion
+```
+
+## Experimentos principais
+
+```bash
+python -m src.experimentos t3 insertion first
+```
+
+## Experimento adicional do GA
+
+```bash
 python -m src.experimentos extra
 ```
 
-## Resultados
-
-Os CSVs brutos são salvos em `resultados/`:
-
-- `resultados/t2_vizinhancas.csv`
-- `resultados/incremental.csv`
-- `resultados/t3_principal.csv`
-- `resultados/t3_convergencia.csv`
-- `resultados/t3_sa_aceitacao.csv`
-- `resultados/t3_ga_geracoes.csv`
-- `resultados/extra_ga_sem_cruzamento.csv`
-
-As tabelas consolidadas são salvas em `resultados/tabelas.md` e os gráficos em `resultados/figuras/`.
-
 ## Reprodução das tabelas e figuras
-
-Comparação das vizinhanças:
-
-```bash
-python -m src.analise vizinhancas
-```
 
 Tabela principal:
 
@@ -89,19 +66,19 @@ Boxplots:
 python -m src.analise boxplots
 ```
 
-Curvas de convergência:
+Convergência:
 
 ```bash
 python -m src.analise convergencia
 ```
 
-Taxa de aceitação do Simulated Annealing:
+Aceitação do SA:
 
 ```bash
 python -m src.analise aceitacao
 ```
 
-Diversidade do Genetic Algorithm:
+Diversidade do GA:
 
 ```bash
 python -m src.analise diversidade

@@ -1,85 +1,79 @@
-"""simulated_annealing.py
-
-Simulated Annealing com resfriamento geométrico (T <- alfa * T).
-
-Regra de aceitação, para o sucessor sorteado s' da solução corrente s:
-    se h(s') <= h(s): aceita;
-    senão: aceita com probabilidade exp(-(h(s') - h(s)) / T)   (Gibbs).
-
-Calibração (feita em cada execução, com avaliações que contam no orçamento):
-    A partir da solução inicial aleatória, sorteiam-se `amostras` sucessores
-    e mede-se a piora média delta_medio dos que são piores. Então:
-        T0 = -delta_medio / ln(p_inicial)   -> no início, uma piora típica é
-                                               aceita com prob. p_inicial;
-        Tf = T0 * razao_final               -> no fim, T caiu três ordens de
-                                               grandeza (razao_final = 1e-3),
-                                               e pioras quase não são aceitas;
-        alfa = (Tf / T0) ** (1 / iteracoes) -> T chega a Tf exatamente quando
-                                               o orçamento acaba.
-    Como delta_medio é medido na própria instância, a escala de T acompanha
-    a magnitude de h em cada instância.
-"""
+"""Simulated Annealing com resfriamento geométrico e aceitação de Gibbs."""
 
 import math
 import random
 
-from src.problema import avaliar_com_contagem, solucao_aleatoria, zerar_contador
-from src.vizinhancas import sucessor_aleatorio
 
-
-def simulated_annealing(instancia, operador, orcamento, rng=None,
-                        p_inicial=0.8, razao_final=1e-3, amostras=100,
-                        janelas=100):
-    """Executa o SA até gastar exatamente o orçamento de avaliações.
-
-    janelas: a execução é dividida em `janelas` trechos de mesmo número de
-    iterações; em cada um registra-se a taxa de aceitação de movimentos
-    piores (aceitos piores / propostos piores).
-
-    Devolve um dicionário com:
-    - melhor_solucao, melhor_h, avaliacoes
-    - t0, tf, alfa
-    - aceitos: movimentos aceitos (melhores, iguais ou piores)
-    - piores_propostos, piores_aceitos: totais da execução
-    - historico: lista de (avaliacoes, melhor_h) a cada nova melhor solução
-    - aceitacao: lista de (avaliacoes, temperatura, taxa) por janela
-    """
+def calibrar_sa(problema, operador, orcamento, rng=None, amostras=200,
+                p_inicial=0.8, razao_final=1e-3):
+    """Estima T0, Tf e alfa a partir da escala típica de pioras na instância."""
     if rng is None:
         rng = random.Random()
     elif isinstance(rng, int):
         rng = random.Random(rng)
 
-    zerar_contador(instancia)
-
-    atual = solucao_aleatoria(instancia["n"], rng)
-    h_atual = avaliar_com_contagem(atual, instancia)
-    melhor_solucao = atual
-    melhor_h = h_atual
-    historico = [(instancia["avaliacoes"], melhor_h)]
-
-    # --- Calibração de T0 e Tf ---
+    problema.iniciar_orcamento(None)
     pioras = []
     for _ in range(amostras):
-        vizinho = sucessor_aleatorio(atual, operador, rng)
-        h_vizinho = avaliar_com_contagem(vizinho, instancia)
-        if h_vizinho > h_atual:
-            pioras.append(h_vizinho - h_atual)
-        if h_vizinho < melhor_h:
-            melhor_solucao = vizinho
-            melhor_h = h_vizinho
-            historico.append((instancia["avaliacoes"], melhor_h))
+        solucao = problema.solucao_aleatoria(rng)
+        h_solucao = problema.avaliar(solucao)
+        vizinho = problema.sucessor_aleatorio(solucao, operador, rng)
+        h_vizinho = problema.avaliar(vizinho)
+        if h_vizinho > h_solucao:
+            pioras.append(h_vizinho - h_solucao)
 
     if not pioras:
-        pioras = [1]  # caso degenerado: nenhum sucessor sorteado piorou h
+        pioras = [1.0]
+
     delta_medio = sum(pioras) / len(pioras)
     t0 = -delta_medio / math.log(p_inicial)
     tf = t0 * razao_final
-
-    iteracoes = orcamento - instancia["avaliacoes"]
+    iteracoes = max(1, orcamento - 1)
     alfa = (tf / t0) ** (1 / iteracoes)
+
+    return {
+        "delta_medio": delta_medio,
+        "t0": t0,
+        "tf": tf,
+        "alfa": alfa,
+    }
+
+
+def simulated_annealing(problema, operador, orcamento=None, rng=None,
+                        t0=None, tf=None, alfa=None, janelas=100,
+                        p_inicial=0.8, razao_final=1e-3, amostras=200):
+    """Executa o Simulated Annealing até esgotar o orçamento de avaliações."""
+    if rng is None:
+        rng = random.Random()
+    elif isinstance(rng, int):
+        rng = random.Random(rng)
+
+    limite = orcamento if orcamento is not None else problema.orcamento
+
+    # Quando T0/Tf não vêm calibrados previamente, calibra fora do orçamento
+    # da execução para que todas as avaliações do orçamento sejam da busca.
+    if t0 is None or tf is None:
+        calibrado = calibrar_sa(
+            problema, operador, limite, random.Random(0),
+            amostras=amostras, p_inicial=p_inicial, razao_final=razao_final,
+        )
+        t0 = calibrado["t0"]
+        tf = calibrado["tf"]
+        alfa = calibrado["alfa"]
+
+    problema.iniciar_orcamento(limite)
+
+    atual = problema.solucao_aleatoria(rng)
+    h_atual = problema.avaliar(atual)
+    melhor_solucao = atual
+    melhor_h = h_atual
+    historico = [(problema.avaliacoes_usadas, melhor_h)]
+
+    iteracoes = max(1, problema.orcamento - problema.avaliacoes_usadas)
+    if alfa is None:
+        alfa = (tf / t0) ** (1 / iteracoes)
     tamanho_janela = max(1, iteracoes // janelas)
 
-    # --- Laço principal ---
     temperatura = t0
     aceitos = 0
     piores_propostos = 0
@@ -89,9 +83,9 @@ def simulated_annealing(instancia, operador, orcamento, rng=None,
     iteracao = 0
     aceitacao = []
 
-    while instancia["avaliacoes"] < orcamento:
-        vizinho = sucessor_aleatorio(atual, operador, rng)
-        h_vizinho = avaliar_com_contagem(vizinho, instancia)
+    while not problema.orcamento_esgotado():
+        vizinho = problema.sucessor_aleatorio(atual, operador, rng)
+        h_vizinho = problema.avaliar(vizinho)
         delta = h_vizinho - h_atual
 
         if delta <= 0:
@@ -111,24 +105,26 @@ def simulated_annealing(instancia, operador, orcamento, rng=None,
             if h_atual < melhor_h:
                 melhor_solucao = atual
                 melhor_h = h_atual
-                historico.append((instancia["avaliacoes"], melhor_h))
+                historico.append((problema.avaliacoes_usadas, melhor_h))
 
         iteracao += 1
         if iteracao % tamanho_janela == 0:
-            if janela_propostos > 0:
-                taxa = janela_aceitos / janela_propostos
-            else:
-                taxa = 0.0
-            aceitacao.append((instancia["avaliacoes"], temperatura, taxa))
+            taxa = janela_aceitos / janela_propostos if janela_propostos > 0 else 0.0
+            aceitacao.append((problema.avaliacoes_usadas, temperatura, taxa))
             janela_propostos = 0
             janela_aceitos = 0
 
         temperatura *= alfa
 
+    # Registra a janela parcial final caso restem movimentos piores propostos.
+    if janela_propostos > 0:
+        taxa = janela_aceitos / janela_propostos
+        aceitacao.append((problema.avaliacoes_usadas, temperatura, taxa))
+
     return {
         "melhor_solucao": melhor_solucao,
         "melhor_h": melhor_h,
-        "avaliacoes": instancia["avaliacoes"],
+        "avaliacoes": problema.avaliacoes_usadas,
         "t0": t0,
         "tf": tf,
         "alfa": alfa,

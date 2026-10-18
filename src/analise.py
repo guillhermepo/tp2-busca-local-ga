@@ -1,18 +1,4 @@
-"""analise.py
-
-Processamento dos CSVs de resultados/, testes estatísticos (Mann-Whitney) e
-geração das tabelas e figuras do relatório.
-
-Uso, a partir da raiz do projeto:
-
-    python -m src.analise vizinhancas   # tabela e figura da T2 + incremental
-    python -m src.analise tabela        # tabela principal (T3), testes e extra
-    python -m src.analise boxplots      # boxplots por instância (T3)
-    python -m src.analise convergencia  # curvas de convergência (T3)
-    python -m src.analise aceitacao     # taxa de aceitação de piores do SA
-    python -m src.analise diversidade   # diversidade da população do GA
-    python -m src.analise tudo          # executa todos os itens acima
-"""
+"""Processamento dos CSVs de resultados, testes estatísticos e geração de gráficos."""
 
 import os
 import sys
@@ -30,7 +16,9 @@ from src.vizinhancas import OPERADORES, tamanho_vizinhanca
 
 PASTA_FIGURAS = os.path.join(PASTA_RESULTADOS, "figuras")
 INSTANCIAS = ("pequena", "media", "grande")
-REFERENCIAS = {"pequena": H_OTIMO_PEQUENA, "media": 16332, "grande": 60417}
+# Na média e na grande estes valores são apenas os melhores conhecidos
+# (referência da Tabela 1), e não ótimos globais comprovados.
+MELHOR_CONHECIDO_REFERENCIA = {"media": 16332, "grande": 60417}
 NOMES_ALGORITMOS = {"greedy": "Greedy", "sa": "SA", "ga": "GA"}
 CORES = {"greedy": "#1f77b4", "sa": "#d62728", "ga": "#2ca02c"}
 
@@ -45,10 +33,12 @@ def ler_csv(nome_arquivo):
 
 
 def mann_whitney(amostra_a, amostra_b):
-    """Teste de Mann-Whitney U bilateral; devolve p = 1.0 se tudo for igual."""
+    """Executa o teste de Mann-Whitney U bilateral."""
     if set(amostra_a) == set(amostra_b) and len(set(amostra_a)) == 1:
         return 1.0
-    _, p_valor = stats.mannwhitneyu(amostra_a, amostra_b, alternative="two-sided")
+    _, p_valor = stats.mannwhitneyu(
+        amostra_a, amostra_b, alternative="two-sided"
+    )
     return float(p_valor)
 
 
@@ -56,11 +46,48 @@ def formatar_p(p):
     return f"{p:.2e}" if p < 0.001 else f"{p:.4f}"
 
 
-# ---------------------------------------------------------------------------
-# 1. Comparação das vizinhanças (T2) e avaliação incremental
-# ---------------------------------------------------------------------------
+def calcular_gap_pequena(instancia, valor_h):
+    """Calcula gap = (h - 1875) / 1875 em % somente para a instância pequena."""
+    if instancia != "pequena":
+        return None
+    return 100.0 * (valor_h - H_OTIMO_PEQUENA) / H_OTIMO_PEQUENA
+
+
+def resumir_otimos_locais_pequena(df_principal, df_otimos=None):
+    """Resume alcance de h* = 1875 e ótimos locais distintos na instância pequena."""
+    peq_greedy = df_principal[
+        (df_principal["instancia"] == "pequena")
+        & (df_principal["algoritmo"] == "greedy")
+    ]
+    execucoes = len(peq_greedy)
+    atingiram_otimo = int((peq_greedy["melhor_h"] == H_OTIMO_PEQUENA).sum())
+    proporcao_otimo = (
+        atingiram_otimo / execucoes if execucoes > 0 else 0.0
+    )
+
+    permutacoes_distintas_total = None
+    valores_h_distintos = None
+    total_otimos = None
+
+    if df_otimos is not None and not df_otimos.empty:
+        sub = df_otimos[df_otimos["instancia"] == "pequena"]
+        if not sub.empty:
+            total_otimos = len(sub)
+            permutacoes_distintas_total = int(sub["solucao"].nunique())
+            valores_h_distintos = int(sub["h"].nunique())
+
+    return {
+        "execucoes": execucoes,
+        "execucoes_no_otimo": atingiram_otimo,
+        "proporcao_no_otimo": proporcao_otimo,
+        "total_otimos_locais": total_otimos,
+        "permutacoes_distintas_total": permutacoes_distintas_total,
+        "valores_h_distintos": valores_h_distintos,
+    }
+
 
 def analisar_vizinhancas():
+    """Gera as tabelas e figura da comparação de vizinhanças (T2) e avaliação incremental."""
     os.makedirs(PASTA_FIGURAS, exist_ok=True)
     df = ler_csv("t2_vizinhancas.csv")
 
@@ -73,7 +100,7 @@ def analisar_vizinhancas():
 
     print("\n=== T2: Comparação das vizinhanças (Greedy + Random Restart) ===")
     print("| instância | variante | vizinhança | média ± desvio | mínimo | "
-          "mediana | passos | restarts | ótimos distintos | tempo (s) |")
+          "mediana | passos | restarts | ótimos distintos/exec | tempo (s) |")
     print("|---|---|---|---|---|---|---|---|---|---|")
 
     for inst in INSTANCIAS:
@@ -115,9 +142,12 @@ def analisar_vizinhancas():
     if os.path.exists(caminho_inc):
         inc = pd.read_csv(caminho_inc)
         print("\n=== Avaliação completa vs incremental (Greedy best) ===")
-        print("| instância | vizinhança | tempo completa (s) | "
-              "tempo incremental (s) | ganho (x) | mesmo h e avaliações? |")
-        print("|---|---|---|---|---|---|")
+        print(
+            "| instância | vizinhança | avaliações | tempo completa (s) | "
+            "completa (µs/aval) | tempo incremental (s) | "
+            "incremental (µs/aval) | speedup (x) | mesmo h e avaliações? |"
+        )
+        print("|---|---|---|---|---|---|---|---|---|")
         for inst in INSTANCIAS:
             for op in OPERADORES:
                 comp = inc[(inc["instancia"] == inst)
@@ -128,17 +158,26 @@ def analisar_vizinhancas():
                            & (inc["incremental"] == True)]
                 if comp.empty or incr.empty:
                     continue
+                aval = int(comp["avaliacoes"].mean())
                 t_comp = comp["tempo_segundos"].mean()
                 t_incr = incr["tempo_segundos"].mean()
+                if "tempo_por_avaliacao" in comp:
+                    us_comp = comp["tempo_por_avaliacao"].mean() * 1e6
+                    us_incr = incr["tempo_por_avaliacao"].mean() * 1e6
+                else:
+                    us_comp = (t_comp / aval) * 1e6
+                    us_incr = (t_incr / aval) * 1e6
                 ganho = t_comp / t_incr if t_incr > 0 else 1.0
                 iguais = (
                     list(comp["melhor_h"]) == list(incr["melhor_h"])
                     and list(comp["avaliacoes"]) == list(incr["avaliacoes"])
                 )
-                print(f"| {inst} | {op} | {t_comp:.2f} | {t_incr:.2f} | "
-                      f"{ganho:.2f}x | {'sim' if iguais else 'NÃO'} |")
+                print(
+                    f"| {inst} | {op} | {aval} | {t_comp:.3f} | "
+                    f"{us_comp:.2f} | {t_incr:.3f} | {us_incr:.2f} | "
+                    f"{ganho:.2f}x | {'sim' if iguais else 'NÃO'} |"
+                )
 
-    # Figura da T2
     fig, eixos = plt.subplots(1, 3, figsize=(14, 4.5))
     for eixo, inst in zip(eixos, INSTANCIAS):
         dados = []
@@ -164,11 +203,8 @@ def analisar_vizinhancas():
     print(f"\nFigura salva em: {saida}")
 
 
-# ---------------------------------------------------------------------------
-# 2. Tabela principal, testes estatísticos e experimento extra (T3)
-# ---------------------------------------------------------------------------
-
 def gerar_tabela_principal():
+    """Gera a tabela consolidada da T3, testes estatísticos e análise de ótimos locais."""
     df = ler_csv("t3_principal.csv")
     linhas_md = []
 
@@ -179,25 +215,36 @@ def gerar_tabela_principal():
     registrar("# Tabelas de Resultados — TP2\n")
     registrar("## Tabela Principal (T3)\n")
     registrar(
-        "| Instância | Algoritmo | Média ± Desvio | Mínimo | Mediana | "
-        "Gap Mínimo (%) | Gap Média (%) | Avaliações | Tempo Médio (s) |"
+        "| Instância | Referência | Algoritmo | Média ± Desvio | Mínimo | "
+        "Mediana | Gap Mínimo (h*) | Gap Média (h*) | Avaliações | "
+        "Tempo Médio (s) |"
     )
-    registrar("|---|---|---|---|---|---|---|---|---|")
+    registrar("|---|---|---|---|---|---|---|---|---|---|")
 
     for inst in INSTANCIAS:
-        ref = REFERENCIAS[inst]
+        if inst == "pequena":
+            texto_ref = f"h* = {H_OTIMO_PEQUENA} (ótimo global)"
+        else:
+            texto_ref = (
+                f"{MELHOR_CONHECIDO_REFERENCIA[inst]} "
+                "(melhor valor conhecido)"
+            )
+
         for alg in ("greedy", "sa", "ga"):
             sub = df[(df["instancia"] == inst) & (df["algoritmo"] == alg)]
             if sub.empty:
                 continue
             h = sub["melhor_h"]
             desvio = h.std(ddof=1) if len(h) > 1 else 0.0
-            gap_min = 100.0 * (h.min() - ref) / ref
-            gap_med = 100.0 * (h.mean() - ref) / ref
+            gap_min = calcular_gap_pequena(inst, h.min())
+            gap_med = calcular_gap_pequena(inst, h.mean())
+            texto_gap_min = f"{gap_min:+.2f}%" if gap_min is not None else "-"
+            texto_gap_med = f"{gap_med:+.2f}%" if gap_med is not None else "-"
+
             registrar(
-                f"| {inst} | {NOMES_ALGORITMOS[alg]} | "
+                f"| {inst} | {texto_ref} | {NOMES_ALGORITMOS[alg]} | "
                 f"{h.mean():.1f} ± {desvio:.1f} | {int(h.min())} | "
-                f"{h.median():.1f} | {gap_min:+.2f}% | {gap_med:+.2f}% | "
+                f"{h.median():.1f} | {texto_gap_min} | {texto_gap_med} | "
                 f"{int(sub['avaliacoes'].mean())} | "
                 f"{sub['tempo_segundos'].mean():.2f} |"
             )
@@ -223,11 +270,18 @@ def gerar_tabela_principal():
                 f"{sig} |"
             )
 
+    caminho_otimos = os.path.join(
+        PASTA_RESULTADOS, "t3_greedy_otimos_locais.csv"
+    )
+    df_otimos = (
+        pd.read_csv(caminho_otimos) if os.path.exists(caminho_otimos) else None
+    )
+
     registrar("\n## Ótimos Locais e Alcance de h* = 1875 na Instância Pequena\n")
     peq = df[df["instancia"] == "pequena"]
     if not peq.empty:
-        registrar("| Algoritmo | Execuções no ótimo (1875) | "
-                  "Ótimos locais distintos médios |")
+        registrar("| Algoritmo | Execuções que atingiram h* = 1875 | "
+                  "Proporção de alcance de 1875 |")
         registrar("|---|---|---|")
         for alg in ("greedy", "sa", "ga"):
             sub = peq[peq["algoritmo"] == alg]
@@ -235,15 +289,29 @@ def gerar_tabela_principal():
                 continue
             no_otimo = int((sub["melhor_h"] == H_OTIMO_PEQUENA).sum())
             total = len(sub)
-            if alg == "greedy" and "otimos_locais_distintos" in sub:
-                dist = pd.to_numeric(
-                    sub["otimos_locais_distintos"], errors="coerce"
-                ).mean()
-                texto_dist = f"{dist:.1f}"
-            else:
-                texto_dist = "-"
-            registrar(f"| {NOMES_ALGORITMOS[alg]} | {no_otimo}/{total} | "
-                      f"{texto_dist} |")
+            prop = 100.0 * no_otimo / total if total > 0 else 0.0
+            registrar(
+                f"| {NOMES_ALGORITMOS[alg]} | {no_otimo}/{total} | "
+                f"{prop:.1f}% |"
+            )
+
+        resumo_greedy = resumir_otimos_locais_pequena(df, df_otimos)
+        if resumo_greedy["permutacoes_distintas_total"] is not None:
+            registrar(
+                f"\n- **Total de ótimos locais visitados pelo Greedy na "
+                f"pequena (todas as execuções)**: "
+                f"{resumo_greedy['total_otimos_locais']}"
+            )
+            registrar(
+                f"- **Permutações de ótimo local distintas (total acumulado "
+                f"nas {resumo_greedy['execucoes']} execuções)**: "
+                f"{resumo_greedy['permutacoes_distintas_total']}"
+            )
+            registrar(
+                f"- **Valores de h distintos entre esses ótimos locais "
+                f"(informação complementar)**: "
+                f"{resumo_greedy['valores_h_distintos']}"
+            )
 
     caminho_extra = os.path.join(PASTA_RESULTADOS, "extra_ga_sem_cruzamento.csv")
     if os.path.exists(caminho_extra):
@@ -273,11 +341,8 @@ def gerar_tabela_principal():
     print(f"\nTabelas salvas em: {caminho_md}")
 
 
-# ---------------------------------------------------------------------------
-# 3. Boxplots por instância
-# ---------------------------------------------------------------------------
-
 def gerar_boxplots():
+    """Gera os boxplots de distribuição do melhor h final por instância."""
     os.makedirs(PASTA_FIGURAS, exist_ok=True)
     df = ler_csv("t3_principal.csv")
 
@@ -307,18 +372,15 @@ def gerar_boxplots():
     print(f"Figura salva em: {saida}")
 
 
-# ---------------------------------------------------------------------------
-# 4. Curvas de convergência
-# ---------------------------------------------------------------------------
-
 def curva_em_grade(avaliacoes_pontos, valores_pontos, grade):
-    """Reconstrói o melhor h acumulado em cada ponto da grade (função degrau)."""
+    """Reconstrói o melhor h acumulado em cada ponto da grade."""
     indices = np.searchsorted(avaliacoes_pontos, grade, side="right") - 1
     indices = np.clip(indices, 0, len(valores_pontos) - 1)
     return valores_pontos[indices]
 
 
 def gerar_convergencia():
+    """Gera as curvas de convergência por número de avaliações de h."""
     os.makedirs(PASTA_FIGURAS, exist_ok=True)
     conv = ler_csv("t3_convergencia.csv")
     ga_gen = ler_csv("t3_ga_geracoes.csv")
@@ -343,7 +405,6 @@ def gerar_convergencia():
             eixo.plot(grade, mediana, label=NOMES_ALGORITMOS[alg],
                       color=CORES[alg], linewidth=1.8)
 
-        # Curva da média da população do GA (indicador visual de diversidade)
         sub_ga = ga_gen[ga_gen["instancia"] == inst]
         if not sub_ga.empty:
             curvas_media = []
@@ -370,11 +431,8 @@ def gerar_convergencia():
     print(f"Figura salva em: {saida}")
 
 
-# ---------------------------------------------------------------------------
-# 5. Taxa de aceitação de movimentos piores do Simulated Annealing
-# ---------------------------------------------------------------------------
-
 def gerar_aceitacao_sa():
+    """Gera o gráfico da taxa de aceitação de movimentos piores do SA."""
     os.makedirs(PASTA_FIGURAS, exist_ok=True)
     df = ler_csv("t3_sa_aceitacao.csv")
 
@@ -414,11 +472,8 @@ def gerar_aceitacao_sa():
     print(f"Figura salva em: {saida}")
 
 
-# ---------------------------------------------------------------------------
-# 6. Diversidade da população do Genetic Algorithm
-# ---------------------------------------------------------------------------
-
 def gerar_diversidade_ga():
+    """Gera o gráfico da evolução da diversidade da população do GA."""
     os.makedirs(PASTA_FIGURAS, exist_ok=True)
     df = ler_csv("t3_ga_geracoes.csv")
 
@@ -467,17 +522,6 @@ def gerar_diversidade_ga():
     print(f"Figura salva em: {saida}")
 
 
-def executar_tudo():
-    if os.path.exists(os.path.join(PASTA_RESULTADOS, "t2_vizinhancas.csv")):
-        analisar_vizinhancas()
-    if os.path.exists(os.path.join(PASTA_RESULTADOS, "t3_principal.csv")):
-        gerar_tabela_principal()
-        gerar_boxplots()
-        gerar_convergencia()
-        gerar_aceitacao_sa()
-        gerar_diversidade_ga()
-
-
 if __name__ == "__main__":
     comandos = {
         "vizinhancas": analisar_vizinhancas,
@@ -486,13 +530,12 @@ if __name__ == "__main__":
         "convergencia": gerar_convergencia,
         "aceitacao": gerar_aceitacao_sa,
         "diversidade": gerar_diversidade_ga,
-        "tudo": executar_tudo,
     }
-    acao = sys.argv[1] if len(sys.argv) > 1 else "tudo"
-    if acao not in comandos:
-        print("uso: python -m src.analise "
-              "[vizinhancas | tabela | boxplots | convergencia | "
-              "aceitacao | diversidade | tudo]")
+    if len(sys.argv) != 2 or sys.argv[1] not in comandos:
+        print(
+            "uso: python -m src.analise "
+            "[vizinhancas | tabela | boxplots | convergencia | "
+            "aceitacao | diversidade]"
+        )
         sys.exit(1)
-    comandos[acao]()
-
+    comandos[sys.argv[1]]()

@@ -3,7 +3,7 @@
 import os
 import random
 
-from src.problema import avaliar, carregar_instancia, solucao_aleatoria
+from src.problema import Problema, avaliar, carregar_instancia, solucao_aleatoria
 from src.vizinhancas import (
     OPERADORES,
     aplicar_movimento,
@@ -17,7 +17,9 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def carregar(nome):
-    return carregar_instancia(os.path.join(RAIZ, "dados", f"manutencao_{nome}.txt"))
+    return carregar_instancia(
+        os.path.join(RAIZ, "dados", f"manutencao_{nome}.txt")
+    )
 
 
 def test_exemplos_da_figura_3():
@@ -25,7 +27,7 @@ def test_exemplos_da_figura_3():
     assert aplicar_movimento(s, "swap", 1, 4) == [3, 2, 1, 5, 7, 8]
     assert aplicar_movimento(s, "insertion", 1, 4) == [3, 1, 5, 2, 7, 8]
     assert aplicar_movimento(s, "2opt", 1, 4) == [3, 2, 5, 1, 7, 8]
-    assert s == [3, 7, 1, 5, 2, 8]  # a solução original não muda
+    assert s == [3, 7, 1, 5, 2, 8]
 
 
 def test_vizinhos_sao_permutacoes_distintas_e_diferentes_da_original():
@@ -40,7 +42,6 @@ def test_vizinhos_sao_permutacoes_distintas_e_diferentes_da_original():
 
 
 def test_tamanho_das_vizinhancas_por_enumeracao():
-    # Fórmulas conferidas contra a enumeração feita pela implementação.
     formulas = {
         "swap": lambda n: n * (n - 1) // 2,
         "insertion": lambda n: (n - 1) ** 2,
@@ -55,7 +56,6 @@ def test_tamanho_das_vizinhancas_por_enumeracao():
 
 
 def test_insertion_nao_perde_vizinhos_ao_excluir_repetidos():
-    # Todos os pares i != j geram o mesmo conjunto que a vizinhança usada.
     solucao = [4, 1, 6, 2, 5, 3]
     todos = set()
     for i in range(6):
@@ -75,26 +75,28 @@ def test_sucessor_aleatorio_pertence_a_vizinhanca():
         for _ in range(3000):
             sorteados.add(tuple(sucessor_aleatorio(solucao, operador, rng)))
         assert sorteados <= vizinhos
-        assert sorteados == vizinhos  # com 3000 sorteios, todos aparecem
+        assert sorteados == vizinhos
 
 
 def test_incremental_igual_a_completa_em_toda_a_vizinhanca_pequena():
     instancia = carregar("pequena")
+    problema = Problema(instancia)
     for semente in range(5):
         solucao = solucao_aleatoria(12, rng=semente)
         for operador in OPERADORES:
-            for vizinho, h in avaliar_vizinhos(solucao, operador, instancia):
+            for vizinho, h in avaliar_vizinhos(solucao, operador, problema):
                 assert h == avaliar(vizinho, instancia)
 
 
 def test_incremental_igual_a_completa_na_media_e_grande():
     for nome, n in (("media", 50), ("grande", 150)):
         instancia = carregar(nome)
+        problema = Problema(instancia)
         solucao = solucao_aleatoria(n, rng=1)
         for operador in OPERADORES:
             rng = random.Random(2)
             for k, (vizinho, h) in enumerate(
-                avaliar_vizinhos(solucao, operador, instancia, rng=rng)
+                avaliar_vizinhos(solucao, operador, problema, rng=rng)
             ):
                 assert h == avaliar(vizinho, instancia)
                 if k == 500:
@@ -103,11 +105,14 @@ def test_incremental_igual_a_completa_na_media_e_grande():
 
 def test_incremental_conta_uma_avaliacao_por_vizinho():
     instancia = carregar("pequena")
+    problema = Problema(instancia)
     solucao = list(range(1, 13))
     for incremental in (True, False):
-        instancia["avaliacoes"] = 0
-        total = sum(1 for _ in avaliar_vizinhos(solucao, "insertion", instancia,
-                                                 incremental))
+        problema.iniciar_orcamento()
+        total = sum(
+            1 for _ in avaliar_vizinhos(
+                solucao, "insertion", problema, incremental
+            )
+        )
         assert total == tamanho_vizinhanca(12, "insertion")
-        assert instancia["avaliacoes"] == total
-
+        assert problema.avaliacoes_usadas == total
