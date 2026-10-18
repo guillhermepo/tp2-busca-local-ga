@@ -1,134 +1,140 @@
 """simulated_annealing.py
 
-Simulated Annealing com resfriamento geométrico, T <- alpha * T.
+Simulated Annealing com resfriamento geométrico (T <- alfa * T).
 
-Regra de aceitação (sucessor aleatório pi' da solução corrente pi):
-- se h(pi') <= h(pi), aceita;
-- senão, aceita com probabilidade exp(-(h(pi') - h(pi)) / T) (Gibbs).
+Regra de aceitação, para o sucessor sorteado s' da solução corrente s:
+    se h(s') <= h(s): aceita;
+    senão: aceita com probabilidade exp(-(h(s') - h(s)) / T)   (Gibbs).
 
-CALIBRAÇÃO DO ANNEALING SCHEDULE (automática, por instância)
-
-A escala de h(pi') - h(pi) muda muito com o tamanho da instância (dezenas na
-pequena, milhares na grande), então T0 e Tf não são constantes:
-
-- T0: amostram-se `amostras_calibracao` sucessores de uma solução aleatória
-  e toma-se a média dos aumentos de h (apenas os deltas > 0), `delta_medio`.
-  T0 = -delta_medio / ln(p0), isto é, T0 faz um movimento pior típico ser
-  aceito com probabilidade p0 (padrão 0.8): a busca começa quase como um
-  random walk.
-- Tf = T0 * razao_final (padrão 1e-3): ao final, um movimento pior típico
-  tem probabilidade ~p0^(1000) de ser aceito, ou seja, a busca termina
-  praticamente como um greedy descent.
-- Em cada temperatura fazem-se `passos_por_temperatura` propostas (padrão n).
-  O número de patamares K sai do orçamento restante, e
-  alpha = (Tf / T0) ** (1 / (K - 1)). Assim o resfriamento usa o orçamento
-  inteiro, e o schedule é comparável entre instâncias.
-
-As avaliações da calibração são contadas no orçamento (nada é gratuito).
-
-Taxa de aceitação de movimentos piores: em cada patamar guarda-se
-(avaliacoes, temperatura, piores_propostos, piores_aceitos) para o gráfico
-exigido no relatório.
+Calibração (feita em cada execução, com avaliações que contam no orçamento):
+    A partir da solução inicial aleatória, sorteiam-se `amostras` sucessores
+    e mede-se a piora média delta_medio dos que são piores. Então:
+        T0 = -delta_medio / ln(p_inicial)   -> no início, uma piora típica é
+                                               aceita com prob. p_inicial;
+        Tf = T0 * razao_final               -> no fim, T caiu três ordens de
+                                               grandeza (razao_final = 1e-3),
+                                               e pioras quase não são aceitas;
+        alfa = (Tf / T0) ** (1 / iteracoes) -> T chega a Tf exatamente quando
+                                               o orçamento acaba.
+    Como delta_medio é medido na própria instância, a escala de T acompanha
+    a magnitude de h em cada instância.
 """
 
 import math
 import random
 
-from src.rastro import Rastro
+from src.problema import avaliar_com_contagem, solucao_aleatoria, zerar_contador
+from src.vizinhancas import sucessor_aleatorio
 
 
-def calibrar_temperaturas(problema, rng, amostras, p0, razao_final, rastro):
-    """Estima (T0, Tf) a partir de deltas amostrados de uma solução aleatória.
+def simulated_annealing(instancia, operador, orcamento, rng=None,
+                        p_inicial=0.8, razao_final=1e-3, amostras=100,
+                        janelas=100):
+    """Executa o SA até gastar exatamente o orçamento de avaliações.
 
-    Devolve (t0, tf, delta_medio). Cada sucessor amostrado conta 1 avaliação.
-    """
-    solucao = problema.solucao_aleatoria(rng)
-    h_base = problema.h(solucao)
-    rastro.observar(problema.avaliacoes, solucao, h_base)
-    deltas = []
-    for _ in range(amostras):
-        vizinho, h_vizinho = problema.sucessor_aleatorio(solucao, rng)
-        rastro.observar(problema.avaliacoes, vizinho, h_vizinho)
-        if h_vizinho > h_base:
-            deltas.append(h_vizinho - h_base)
-    delta_medio = sum(deltas) / len(deltas) if deltas else 1.0
-    t0 = -delta_medio / math.log(p0)
-    return t0, t0 * razao_final, delta_medio
+    janelas: a execução é dividida em `janelas` trechos de mesmo número de
+    iterações; em cada um registra-se a taxa de aceitação de movimentos
+    piores (aceitos piores / propostos piores).
 
-
-def simulated_annealing(problema, orcamento, rng=None, p0=0.8,
-                        razao_final=1e-3, passos_por_temperatura=None,
-                        amostras_calibracao=100, t0=None, tf=None):
-    """Executa o SA até gastar exatamente `orcamento` avaliações.
-
-    t0/tf: se informados, substituem a calibração automática (as
-    amostras de calibração não são gastas).
-
-    Devolve um dicionário com melhor_solucao, melhor_h, avaliacoes,
-    passos (movimentos aceitos), restarts (0), historico, t0, tf, alpha e
-    taxa_aceitacao: lista de (avaliacoes, T, piores_propostos,
-    piores_aceitos), uma entrada por patamar de temperatura.
+    Devolve um dicionário com:
+    - melhor_solucao, melhor_h, avaliacoes
+    - t0, tf, alfa
+    - aceitos: movimentos aceitos (melhores, iguais ou piores)
+    - piores_propostos, piores_aceitos: totais da execução
+    - historico: lista de (avaliacoes, melhor_h) a cada nova melhor solução
+    - aceitacao: lista de (avaliacoes, temperatura, taxa) por janela
     """
     if rng is None:
         rng = random.Random()
     elif isinstance(rng, int):
         rng = random.Random(rng)
-    if passos_por_temperatura is None:
-        passos_por_temperatura = max(1, problema.n)
 
-    problema.zerar()
-    rastro = Rastro()
+    zerar_contador(instancia)
 
-    if t0 is None or tf is None:
-        t0, tf, _ = calibrar_temperaturas(
-            problema, rng, amostras_calibracao, p0, razao_final, rastro
-        )
-    restante = max(0, orcamento - problema.avaliacoes)
-    patamares = max(2, restante // passos_por_temperatura)
-    alpha = (tf / t0) ** (1.0 / (patamares - 1))
+    atual = solucao_aleatoria(instancia["n"], rng)
+    h_atual = avaliar_com_contagem(atual, instancia)
+    melhor_solucao = atual
+    melhor_h = h_atual
+    historico = [(instancia["avaliacoes"], melhor_h)]
 
-    atual = problema.solucao_aleatoria(rng)
-    h_atual = problema.h(atual)
-    rastro.observar(problema.avaliacoes, atual, h_atual)
+    # --- Calibração de T0 e Tf ---
+    pioras = []
+    for _ in range(amostras):
+        vizinho = sucessor_aleatorio(atual, operador, rng)
+        h_vizinho = avaliar_com_contagem(vizinho, instancia)
+        if h_vizinho > h_atual:
+            pioras.append(h_vizinho - h_atual)
+        if h_vizinho < melhor_h:
+            melhor_solucao = vizinho
+            melhor_h = h_vizinho
+            historico.append((instancia["avaliacoes"], melhor_h))
 
+    if not pioras:
+        pioras = [1]  # caso degenerado: nenhum sucessor sorteado piorou h
+    delta_medio = sum(pioras) / len(pioras)
+    t0 = -delta_medio / math.log(p_inicial)
+    tf = t0 * razao_final
+
+    iteracoes = orcamento - instancia["avaliacoes"]
+    alfa = (tf / t0) ** (1 / iteracoes)
+    tamanho_janela = max(1, iteracoes // janelas)
+
+    # --- Laço principal ---
     temperatura = t0
     aceitos = 0
-    taxa_aceitacao = []
+    piores_propostos = 0
+    piores_aceitos = 0
+    janela_propostos = 0
+    janela_aceitos = 0
+    iteracao = 0
+    aceitacao = []
 
-    while problema.avaliacoes < orcamento:
-        piores_propostos = 0
-        piores_aceitos = 0
-        for _ in range(passos_por_temperatura):
-            if problema.avaliacoes >= orcamento:
-                break
-            vizinho, h_vizinho = problema.sucessor_aleatorio(atual, rng)
-            rastro.observar(problema.avaliacoes, vizinho, h_vizinho)
-            delta = h_vizinho - h_atual
-            if delta <= 0:
-                aceitar = True
+    while instancia["avaliacoes"] < orcamento:
+        vizinho = sucessor_aleatorio(atual, operador, rng)
+        h_vizinho = avaliar_com_contagem(vizinho, instancia)
+        delta = h_vizinho - h_atual
+
+        if delta <= 0:
+            aceita = True
+        else:
+            piores_propostos += 1
+            janela_propostos += 1
+            aceita = rng.random() < math.exp(-delta / temperatura)
+            if aceita:
+                piores_aceitos += 1
+                janela_aceitos += 1
+
+        if aceita:
+            atual = vizinho
+            h_atual = h_vizinho
+            aceitos += 1
+            if h_atual < melhor_h:
+                melhor_solucao = atual
+                melhor_h = h_atual
+                historico.append((instancia["avaliacoes"], melhor_h))
+
+        iteracao += 1
+        if iteracao % tamanho_janela == 0:
+            if janela_propostos > 0:
+                taxa = janela_aceitos / janela_propostos
             else:
-                piores_propostos += 1
-                aceitar = rng.random() < math.exp(-delta / temperatura)
-                if aceitar:
-                    piores_aceitos += 1
-            if aceitar:
-                atual, h_atual = vizinho, h_vizinho
-                aceitos += 1
-        taxa_aceitacao.append(
-            (problema.avaliacoes, temperatura, piores_propostos,
-             piores_aceitos)
-        )
-        temperatura *= alpha
+                taxa = 0.0
+            aceitacao.append((instancia["avaliacoes"], temperatura, taxa))
+            janela_propostos = 0
+            janela_aceitos = 0
+
+        temperatura *= alfa
 
     return {
-        "melhor_solucao": rastro.melhor_solucao,
-        "melhor_h": rastro.melhor_h,
-        "avaliacoes": problema.avaliacoes,
-        "passos": aceitos,
-        "restarts": 0,
-        "historico": rastro.historico,
+        "melhor_solucao": melhor_solucao,
+        "melhor_h": melhor_h,
+        "avaliacoes": instancia["avaliacoes"],
         "t0": t0,
         "tf": tf,
-        "alpha": alpha,
-        "taxa_aceitacao": taxa_aceitacao,
+        "alfa": alfa,
+        "aceitos": aceitos,
+        "piores_propostos": piores_propostos,
+        "piores_aceitos": piores_aceitos,
+        "historico": historico,
+        "aceitacao": aceitacao,
     }

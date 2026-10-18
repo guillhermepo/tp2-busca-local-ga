@@ -10,6 +10,7 @@ from src.problema import (
     avaliar_com_contagem,
     calcular_distancia,
     carregar_instancia,
+    instancia_exemplo_figura1,
     solucao_aleatoria,
     zerar_contador,
 )
@@ -60,6 +61,24 @@ def test_identidade_produz_4366():
     instancia = carregar_pequena()
     identidade = list(range(1, 13))
     assert avaliar(identidade, instancia) == 4366
+
+
+def test_exemplo_figura_1_do_enunciado():
+    """Exemplo com n = 4: rota gulosa custa 39 e o ótimo (1, 4, 3, 2) custa 22."""
+    instancia = instancia_exemplo_figura1()
+    assert avaliar([1, 4, 2, 3], instancia) == 39
+    assert avaliar([1, 4, 3, 2], instancia) == 22
+
+
+def test_avaliacao_a_partir_de_um_prefixo():
+    instancia = carregar_pequena()
+    solucao = solucao_aleatoria(12, rng=3)
+    prefixos = [(0, 0)]
+    total = avaliar(solucao, instancia, prefixos=prefixos)
+    assert prefixos[-1][1] == total
+    for k in range(13):
+        tempo, custo = prefixos[k]
+        assert avaliar(solucao, instancia, k, tempo, custo) == total
 
 
 def test_distancia_euclidiana_arredondada():

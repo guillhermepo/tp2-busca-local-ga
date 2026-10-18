@@ -1,88 +1,113 @@
-"""Testes dos operadores de vizinhança."""
+"""Testes das vizinhanças e da avaliação incremental."""
 
+import os
 import random
 
-import pytest
+from src.problema import avaliar, carregar_instancia, solucao_aleatoria
+from src.vizinhancas import (
+    OPERADORES,
+    aplicar_movimento,
+    avaliar_vizinhos,
+    gerar_vizinhos,
+    sucessor_aleatorio,
+    tamanho_vizinhanca,
+)
 
-from src import vizinhancas as v
-
-
-@pytest.mark.parametrize("operador", v.OPERADORES)
-@pytest.mark.parametrize("n", [2, 3, 6, 12])
-def test_tamanho_da_vizinhanca(operador, n):
-    solucao = list(range(1, n + 1))
-    vizinhos = v.gerar_vizinhos(solucao, operador)
-    assert len(vizinhos) == v.tamanho_vizinhanca(n, operador)
-    assert len(vizinhos) == len(v.movimentos(n, operador))
-
-
-def test_formulas_de_tamanho():
-    assert v.tamanho_vizinhanca(150, "swap") == 11175  # citado no enunciado
-    assert v.tamanho_vizinhanca(150, "2opt") == 11175
-    assert v.tamanho_vizinhanca(150, "insertion") == 149 ** 2
-    assert v.tamanho_vizinhanca(1, "swap") == 0
+RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-@pytest.mark.parametrize("operador", v.OPERADORES)
-def test_vizinhos_sao_permutacoes_distintas_da_original(operador):
-    solucao = [3, 1, 4, 6, 2, 5]
-    vizinhos = v.gerar_vizinhos(solucao, operador)
-    for viz in vizinhos:
-        assert sorted(viz) == [1, 2, 3, 4, 5, 6]
-        assert viz != solucao
-    assert len({tuple(x) for x in vizinhos}) == len(vizinhos)  # sem duplicatas
+def carregar(nome):
+    return carregar_instancia(os.path.join(RAIZ, "dados", f"manutencao_{nome}.txt"))
 
 
-@pytest.mark.parametrize("operador", v.OPERADORES)
-def test_nao_modifica_a_lista_recebida(operador):
-    solucao = [3, 1, 4, 6, 2, 5]
-    copia = list(solucao)
-    v.gerar_vizinhos(solucao, operador)
-    v.sucessor_aleatorio(solucao, operador, random.Random(1))
-    assert solucao == copia
+def test_exemplos_da_figura_3():
+    s = [3, 7, 1, 5, 2, 8]
+    assert aplicar_movimento(s, "swap", 1, 4) == [3, 2, 1, 5, 7, 8]
+    assert aplicar_movimento(s, "insertion", 1, 4) == [3, 1, 5, 2, 7, 8]
+    assert aplicar_movimento(s, "2opt", 1, 4) == [3, 2, 5, 1, 7, 8]
+    assert s == [3, 7, 1, 5, 2, 8]  # a solução original não muda
 
 
-def test_exemplos_da_figura3():
-    base = [3, 7, 1, 5, 2, 8]
-    assert v.aplicar_movimento(base, (1, 4), "swap") == [3, 2, 1, 5, 7, 8]
-    assert v.aplicar_movimento(base, (1, 4), "insertion") == [3, 1, 5, 2, 7, 8]
-    assert v.aplicar_movimento(base, (1, 4), "2opt") == [3, 2, 5, 1, 7, 8]
+def test_vizinhos_sao_permutacoes_distintas_e_diferentes_da_original():
+    for n in range(2, 9):
+        solucao = solucao_aleatoria(n, rng=n)
+        for operador in OPERADORES:
+            vizinhos = gerar_vizinhos(solucao, operador)
+            for vizinho in vizinhos:
+                assert sorted(vizinho) == list(range(1, n + 1))
+                assert vizinho != solucao
+            assert len(set(tuple(v) for v in vizinhos)) == len(vizinhos)
 
 
-def test_insertion_para_tras():
-    assert v.aplicar_movimento([1, 2, 3, 4], (3, 0), "insertion") == [4, 1, 2, 3]
+def test_tamanho_das_vizinhancas_por_enumeracao():
+    # Fórmulas conferidas contra a enumeração feita pela implementação.
+    formulas = {
+        "swap": lambda n: n * (n - 1) // 2,
+        "insertion": lambda n: (n - 1) ** 2,
+        "2opt": lambda n: n * (n - 1) // 2,
+    }
+    for n in range(2, 9):
+        solucao = list(range(1, n + 1))
+        for operador in OPERADORES:
+            distintos = set(tuple(v) for v in gerar_vizinhos(solucao, operador))
+            assert len(distintos) == formulas[operador](n)
+            assert tamanho_vizinhanca(n, operador) == formulas[operador](n)
 
 
-@pytest.mark.parametrize("operador", v.OPERADORES)
-def test_sucessor_aleatorio_pertence_a_vizinhanca(operador):
-    solucao = [3, 1, 4, 6, 2, 5]
-    todos = {tuple(x) for x in v.gerar_vizinhos(solucao, operador)}
-    rng = random.Random(0)
-    for _ in range(200):
-        assert tuple(v.sucessor_aleatorio(solucao, operador, rng)) in todos
+def test_insertion_nao_perde_vizinhos_ao_excluir_repetidos():
+    # Todos os pares i != j geram o mesmo conjunto que a vizinhança usada.
+    solucao = [4, 1, 6, 2, 5, 3]
+    todos = set()
+    for i in range(6):
+        for j in range(6):
+            if i != j:
+                todos.add(tuple(aplicar_movimento(solucao, "insertion", i, j)))
+    usados = set(tuple(v) for v in gerar_vizinhos(solucao, "insertion"))
+    assert usados == todos
 
 
-@pytest.mark.parametrize("operador", v.OPERADORES)
-def test_movimento_aleatorio_cobre_todos_os_movimentos(operador):
-    rng = random.Random(0)
-    n = 5
-    vistos = {v.movimento_aleatorio(n, operador, rng) for _ in range(3000)}
-    assert vistos == set(v.movimentos(n, operador))
+def test_sucessor_aleatorio_pertence_a_vizinhanca():
+    rng = random.Random(3)
+    solucao = [5, 2, 7, 1, 3, 6, 4]
+    for operador in OPERADORES:
+        vizinhos = set(tuple(v) for v in gerar_vizinhos(solucao, operador))
+        sorteados = set()
+        for _ in range(3000):
+            sorteados.add(tuple(sucessor_aleatorio(solucao, operador, rng)))
+        assert sorteados <= vizinhos
+        assert sorteados == vizinhos  # com 3000 sorteios, todos aparecem
 
 
-@pytest.mark.parametrize("operador", v.OPERADORES)
-def test_sucessor_aleatorio_com_semente_inteira(operador):
-    a = v.sucessor_aleatorio(list(range(1, 9)), operador, 4)
-    b = v.sucessor_aleatorio(list(range(1, 9)), operador, 4)
-    assert a == b
+def test_incremental_igual_a_completa_em_toda_a_vizinhanca_pequena():
+    instancia = carregar("pequena")
+    for semente in range(5):
+        solucao = solucao_aleatoria(12, rng=semente)
+        for operador in OPERADORES:
+            for vizinho, h in avaliar_vizinhos(solucao, operador, instancia):
+                assert h == avaliar(vizinho, instancia)
 
 
-def test_operador_invalido():
-    with pytest.raises(ValueError):
-        v.gerar_vizinhos([1, 2, 3], "3opt")
+def test_incremental_igual_a_completa_na_media_e_grande():
+    for nome, n in (("media", 50), ("grande", 150)):
+        instancia = carregar(nome)
+        solucao = solucao_aleatoria(n, rng=1)
+        for operador in OPERADORES:
+            rng = random.Random(2)
+            for k, (vizinho, h) in enumerate(
+                avaliar_vizinhos(solucao, operador, instancia, rng=rng)
+            ):
+                assert h == avaliar(vizinho, instancia)
+                if k == 500:
+                    break
 
 
-def test_menos_de_dois_ativos_nao_tem_vizinhos():
-    assert v.gerar_vizinhos([1], "swap") == []
-    with pytest.raises(ValueError):
-        v.movimento_aleatorio(1, "swap", random.Random(0))
+def test_incremental_conta_uma_avaliacao_por_vizinho():
+    instancia = carregar("pequena")
+    solucao = list(range(1, 13))
+    for incremental in (True, False):
+        instancia["avaliacoes"] = 0
+        total = sum(1 for _ in avaliar_vizinhos(solucao, "insertion", instancia,
+                                                 incremental))
+        assert total == tamanho_vizinhanca(12, "insertion")
+        assert instancia["avaliacoes"] == total
+

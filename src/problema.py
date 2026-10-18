@@ -74,6 +74,24 @@ def carregar_instancia(caminho):
     return instancia
 
 
+def instancia_exemplo_figura1():
+    """Instância didática da Figura 1 do enunciado (n = 4, base em (0, 0))."""
+    ativos = [
+        {"x": 0, "y": 0, "p": 0, "d": 0, "w": 0},
+        {"x": 3, "y": 4, "p": 2, "d": 10, "w": 3},
+        {"x": 6, "y": 0, "p": 3, "d": 14, "w": 1},
+        {"x": 0, "y": 8, "p": 1, "d": 25, "w": 2},
+        {"x": 6, "y": 8, "p": 4, "d": 20, "w": 5},
+    ]
+    return {
+        "n": 4,
+        "base": (0, 0),
+        "ativos": ativos,
+        "tempos": calcular_matriz_tempos(ativos),
+        "avaliacoes": 0,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Tempos de deslocamento
 # ---------------------------------------------------------------------------
@@ -109,29 +127,44 @@ def calcular_matriz_tempos(ativos):
 # Função de avaliação
 # ---------------------------------------------------------------------------
 
-def avaliar(solucao, instancia):
+def avaliar(solucao, instancia, inicio=0, tempo_inicial=0, custo_inicial=0,
+            prefixos=None):
     """Calcula h(solucao) = soma de w_j * max(0, C_j - d_j).
 
     Esta função NÃO conta avaliações. Use-a em testes e verificações.
     Os algoritmos devem usar avaliar_com_contagem.
+
+    Parâmetros opcionais (usados pela avaliação incremental):
+    - inicio, tempo_inicial, custo_inicial: começa na posição `inicio`,
+      supondo que os `inicio` primeiros ativos já foram percorridos e
+      terminaram no instante tempo_inicial com custo acumulado custo_inicial.
+    - prefixos: se for uma lista, recebe (C, h acumulado) depois de cada
+      posição percorrida.
     """
     ativos = instancia["ativos"]
     tempos = instancia["tempos"]
 
-    posicao_atual = 0     # começa na base (índice 0)
-    tempo_atual = 0       # tempo acumulado C_0 = 0
-    custo = 0             # valor de h acumulado
+    if inicio == 0:
+        posicao_atual = 0  # começa na base (índice 0)
+    else:
+        posicao_atual = solucao[inicio - 1]
+    tempo_atual = tempo_inicial   # C_0 = 0 quando inicio = 0
+    custo = custo_inicial
 
-    for ativo in solucao:
+    for k in range(inicio, len(solucao)):
+        ativo = solucao[k]
+        info = ativos[ativo]
+
         # Tempo de conclusão: tempo anterior + deslocamento + manutenção
-        tempo_atual += tempos[posicao_atual][ativo]
-        tempo_atual += ativos[ativo]["p"]
+        tempo_atual += tempos[posicao_atual][ativo] + info["p"]
 
         # Atraso é zero se terminou no prazo (ou antes)
-        atraso = max(0, tempo_atual - ativos[ativo]["d"])
+        atraso = tempo_atual - info["d"]
+        if atraso > 0:
+            custo += info["w"] * atraso
 
-        # Custo ponderado pela criticidade
-        custo += ativos[ativo]["w"] * atraso
+        if prefixos is not None:
+            prefixos.append((tempo_atual, custo))
 
         posicao_atual = ativo  # próxima viagem parte deste ativo
 
@@ -142,15 +175,17 @@ def avaliar(solucao, instancia):
 # Contagem de avaliações (centralizada aqui)
 # ---------------------------------------------------------------------------
 
-def avaliar_com_contagem(solucao, instancia):
+def avaliar_com_contagem(solucao, instancia, inicio=0, tempo_inicial=0,
+                         custo_inicial=0):
     """Igual a avaliar, mas incrementa instancia["avaliacoes"].
 
     É o ÚNICO lugar onde o contador aumenta. Todos os algoritmos
     (Greedy, SA, GA) devem avaliar soluções através desta função, para que
-    o orçamento de avaliações seja contado corretamente.
+    o orçamento de avaliações seja contado corretamente. Uma avaliação
+    incremental (inicio > 0) conta como uma avaliação, igual à completa.
     """
     instancia["avaliacoes"] += 1
-    return avaliar(solucao, instancia)
+    return avaliar(solucao, instancia, inicio, tempo_inicial, custo_inicial)
 
 
 def zerar_contador(instancia):
@@ -176,67 +211,3 @@ def solucao_aleatoria(n, rng=None):
     solucao = list(range(1, n + 1))
     rng.shuffle(solucao)
     return solucao
-
-
-# ---------------------------------------------------------------------------
-# Avaliação incremental (apenas o sufixo afetado por um movimento)
-# ---------------------------------------------------------------------------
-
-def prefixos(solucao, instancia):
-    """Tempos de conclusão e custos acumulados de cada prefixo de solucao.
-
-    Devolve (C, H), listas de tamanho n+1 em que, para k ativos já visitados,
-    C[k] é o instante de conclusão do k-ésimo ativo (C[0] = 0) e H[k] é o
-    custo acumulado deles (H[0] = 0). Não conta avaliações: é só preparação
-    para avaliar_sufixo.
-    """
-    ativos = instancia["ativos"]
-    tempos = instancia["tempos"]
-    C = [0]
-    H = [0]
-    posicao = 0
-    tempo = 0
-    custo = 0
-    for ativo in solucao:
-        tempo += tempos[posicao][ativo] + ativos[ativo]["p"]
-        atraso = tempo - ativos[ativo]["d"]
-        if atraso > 0:
-            custo += ativos[ativo]["w"] * atraso
-        posicao = ativo
-        C.append(tempo)
-        H.append(custo)
-    return C, H
-
-
-def avaliar_sufixo(vizinho, instancia, k, C, H):
-    """h(vizinho), reaproveitando os k primeiros ativos de uma solução-base.
-
-    Pré-condição: vizinho[:k] é igual aos k primeiros ativos da solução cujos
-    prefixos (C, H) foram calculados por prefixos(). Só os ativos a partir da
-    posição k são reavaliados: custo O(n - k) em vez de O(n). O resultado é
-    idêntico a avaliar(vizinho, instancia). Não conta avaliações.
-    """
-    ativos = instancia["ativos"]
-    tempos = instancia["tempos"]
-    posicao = vizinho[k - 1] if k > 0 else 0
-    tempo = C[k]
-    custo = H[k]
-    for i in range(k, len(vizinho)):
-        ativo = vizinho[i]
-        dados = ativos[ativo]
-        tempo += tempos[posicao][ativo] + dados["p"]
-        atraso = tempo - dados["d"]
-        if atraso > 0:
-            custo += dados["w"] * atraso
-        posicao = ativo
-    return custo
-
-
-def avaliar_sufixo_com_contagem(vizinho, instancia, k, C, H):
-    """Igual a avaliar_sufixo, mas conta UMA avaliação de h.
-
-    Uma avaliação incremental vale uma avaliação no orçamento: o ganho é de
-    tempo de parede, não de contagem.
-    """
-    instancia["avaliacoes"] += 1
-    return avaliar_sufixo(vizinho, instancia, k, C, H)
